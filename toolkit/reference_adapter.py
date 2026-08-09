@@ -30,9 +30,6 @@ from transformers import (
 )
 from toolkit.models.size_agnostic_feature_encoder import SAFEImageProcessor, SAFEVisionModel
 
-# TODO fix it
-from transformers.models.deprecated import ViTHybridImageProcessor, ViTHybridForImageClassification
-from transformers import ViTFeatureExtractor, ViTForImageClassification
 
 import torch.nn.functional as F
 import torch.nn as nn

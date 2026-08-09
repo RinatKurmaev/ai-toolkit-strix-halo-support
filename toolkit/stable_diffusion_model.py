@@ -42,7 +42,7 @@ from toolkit.train_tools import get_torch_dtype, apply_noise_offset
 from einops import rearrange, repeat
 import torch
 from toolkit.pipelines import CustomStableDiffusionXLPipeline, CustomStableDiffusionPipeline, \
-    StableDiffusionKDiffusionXLPipeline, StableDiffusionXLRefinerPipeline, FluxWithCFGPipeline, \
+    StableDiffusionXLRefinerPipeline, FluxWithCFGPipeline, \
     FluxAdvancedControlPipeline
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAdapter, DDPMScheduler, \
     StableDiffusionXLAdapterPipeline, StableDiffusionAdapterPipeline, DiffusionPipeline, PixArtTransformer2DModel, \
@@ -232,6 +232,12 @@ class StableDiffusion:
         # can be used on models to invalidate cache if things change.
         self.latent_space_version = None
         
+        # if a mask is passed, do the loss with the mask. May be set false for models that use a mask for other reasons.
+        self.do_masked_loss = True
+        
+        # if the model outputs an x0 prediction (clean latent)
+        self.x0_pred = False
+        
     # properties for old arch for backwards compatibility
     @property
     def is_xl(self):
@@ -268,6 +274,10 @@ class StableDiffusion:
     @property
     def is_lumina2(self):
         return self.arch == 'lumina2'
+    
+    @property
+    def text_embedding_space_version(self):
+        return self.arch
     
     @property
     def unet_unwrapped(self):
@@ -1202,10 +1212,7 @@ class StableDiffusion:
                 except:
                     pass
 
-            if sampler.startswith("sample_") and self.is_xl:
-                # using kdiffusion
-                Pipe = StableDiffusionKDiffusionXLPipeline
-            elif self.is_xl:
+            if self.is_xl:
                 Pipe = StableDiffusionXLPipeline
             elif self.is_v3:
                 Pipe = StableDiffusion3Pipeline
@@ -1337,9 +1344,6 @@ class StableDiffusion:
             flush()
             # disable progress bar
             pipeline.set_progress_bar_config(disable=True)
-
-            if sampler.startswith("sample_"):
-                pipeline.set_scheduler(sampler)
 
         refiner_pipeline = None
         if self.refiner_unet:
@@ -1708,7 +1712,7 @@ class StableDiffusion:
                             generator=generator,
                         ).images[0]
 
-                    gen_config.save_image(img, i)
+                    gen_config.save_image_atomic(img, i)
                     gen_config.log_image(img, i)
                     self._after_sample_image(i, len(image_configs))
                     flush()
@@ -3131,6 +3135,12 @@ class StableDiffusion:
         # override in child classes to get transformer block names for lora targeting
         return None
     
+    def get_quantization_exclude_modules(self) -> Optional[List[str]]:
+        # override in child classes to keep sensitive modules in full precision when
+        # quantizing. Returns fnmatch patterns matched against the transformer's module
+        # names (e.g. "model.x_embedder*").
+        return None
+    
     def get_base_model_version(self) -> str:
         if self.is_pixart:
             return 'pixart'
@@ -3154,3 +3164,7 @@ class StableDiffusion:
 
     def get_model_to_train(self):
         return self.unet
+        
+    def scale_loss(self, loss):
+        # called to get the loss scaler for the model. Can be overridden in child classes
+        return loss
